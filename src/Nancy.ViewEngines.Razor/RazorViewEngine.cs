@@ -81,50 +81,73 @@
                 }
             }
 
-            var response = new HtmlResponse();
+            // build the body before returning the response so that any errors encountered in the 
+            // compilation or rendering of the template can reflect those errors in the response's 
+            // StatusCode.
+            NancyRazorBuildViewBodyResult result 
+                = BuildViewBody(viewLocationResult, model, renderContext, referencingAssembly);
 
-            response.Contents = stream =>
+            var response = new HtmlResponse
             {
-                var writer = 
-                    new StreamWriter(stream);
-
-                var view = 
-                    this.GetViewInstance(viewLocationResult, renderContext, referencingAssembly, model);
-
-                view.ExecuteView(null, null);
-
-                var body = view.Body;
-                var sectionContents = view.SectionContents;
-
-                var layout = view.HasLayout ? 
-                    view.Layout :
-                    GetViewStartLayout(model, renderContext, referencingAssembly);
-
-                var root = 
-                    string.IsNullOrWhiteSpace(layout);
-
-                while (!root)
+                StatusCode = result.StatusCode,
+                Contents = stream =>
                 {
-                    view = 
-                        this.GetViewInstance(renderContext.LocateView(layout, model), renderContext, referencingAssembly, model);
-
-                    view.ExecuteView(body, sectionContents);
-
-                    body = view.Body;
-                    sectionContents = view.SectionContents;
-
-                    layout = view.HasLayout ?
-                        view.Layout :
-                        GetViewStartLayout(model, renderContext, referencingAssembly);
-
-                    root = !view.HasLayout;
+                    var writer = new StreamWriter(stream);
+                    writer.Write(result.Body);
+                    writer.Flush();
                 }
-
-                writer.Write(body);
-                writer.Flush();
             };
 
             return response;
+        }
+
+        private NancyRazorBuildViewBodyResult BuildViewBody(ViewLocationResult viewLocationResult, dynamic model, IRenderContext renderContext, Assembly referencingAssembly)
+        {
+            var statusCode = HttpStatusCode.OK;
+
+            var view =
+                this.GetViewInstance(viewLocationResult, renderContext, referencingAssembly, model);
+
+            if (view is NancyRazorErrorView) 
+                statusCode = HttpStatusCode.InternalServerError;
+
+            view.ExecuteView(null, null);
+
+            var body = view.Body;
+            var sectionContents = view.SectionContents;
+
+            var layout = view.HasLayout
+                             ? view.Layout
+                             : GetViewStartLayout(model, renderContext, referencingAssembly);
+
+            var root =
+                string.IsNullOrWhiteSpace(layout);
+
+            while (!root)
+            {
+                view =
+                    this.GetViewInstance(renderContext.LocateView(layout, model), renderContext, referencingAssembly, model);
+
+                if (view is NancyRazorErrorView)
+                    statusCode = HttpStatusCode.InternalServerError;
+
+                view.ExecuteView(body, sectionContents);
+
+                body = view.Body;
+                sectionContents = view.SectionContents;
+
+                layout = view.HasLayout
+                             ? view.Layout
+                             : GetViewStartLayout(model, renderContext, referencingAssembly);
+
+                root = !view.HasLayout;
+            }
+
+            return new NancyRazorBuildViewBodyResult()
+            {
+                Body = body,
+                StatusCode = statusCode
+            };
         }
 
         private string GetViewStartLayout(dynamic model, IRenderContext renderContext, Assembly referencingAssembly)
