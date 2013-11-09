@@ -81,19 +81,15 @@
                 }
             }
 
-            // build the body before returning the response so that any errors encountered in the 
-            // compilation or rendering of the template can reflect those errors in the response's 
-            // StatusCode.
-            NancyRazorBuildViewBodyResult result 
-                = BuildViewBody(viewLocationResult, model, renderContext, referencingAssembly);
+            var renderResult = RenderViewBody(viewLocationResult, model, renderContext, referencingAssembly);
 
             var response = new HtmlResponse
             {
-                StatusCode = result.StatusCode,
+                StatusCode = renderResult.StatusCode,
                 Contents = stream =>
                 {
                     var writer = new StreamWriter(stream);
-                    writer.Write(result.Body);
+                    writer.Write(renderResult.Body);
                     writer.Flush();
                 }
             };
@@ -101,15 +97,14 @@
             return response;
         }
 
-        private NancyRazorBuildViewBodyResult BuildViewBody(ViewLocationResult viewLocationResult, dynamic model, IRenderContext renderContext, Assembly referencingAssembly)
+        private NancyRazorBuildViewBodyResult RenderViewBody(ViewLocationResult viewLocationResult, dynamic model, IRenderContext renderContext, Assembly referencingAssembly)
         {
-            var statusCode = HttpStatusCode.OK;
-
             var view =
                 this.GetViewInstance(viewLocationResult, renderContext, referencingAssembly, model);
 
-            if (view is NancyRazorErrorView) 
-                statusCode = HttpStatusCode.InternalServerError;
+            var statusCode = (view is NancyRazorErrorView)
+                ? HttpStatusCode.InternalServerError
+                : HttpStatusCode.OK;
 
             view.ExecuteView(null, null);
 
@@ -117,8 +112,8 @@
             var sectionContents = view.SectionContents;
 
             var layout = view.HasLayout
-                             ? view.Layout
-                             : GetViewStartLayout(model, renderContext, referencingAssembly);
+                ? view.Layout
+                : GetViewStartLayout(model, renderContext, referencingAssembly);
 
             var root =
                 string.IsNullOrWhiteSpace(layout);
@@ -128,8 +123,9 @@
                 view =
                     this.GetViewInstance(renderContext.LocateView(layout, model), renderContext, referencingAssembly, model);
 
-                if (view is NancyRazorErrorView)
-                    statusCode = HttpStatusCode.InternalServerError;
+                statusCode = (view is NancyRazorErrorView)
+                    ? HttpStatusCode.InternalServerError
+                    : statusCode;
 
                 view.ExecuteView(body, sectionContents);
 
@@ -137,17 +133,13 @@
                 sectionContents = view.SectionContents;
 
                 layout = view.HasLayout
-                             ? view.Layout
-                             : GetViewStartLayout(model, renderContext, referencingAssembly);
+                    ? view.Layout
+                    : GetViewStartLayout(model, renderContext, referencingAssembly);
 
                 root = !view.HasLayout;
             }
 
-            return new NancyRazorBuildViewBodyResult()
-            {
-                Body = body,
-                StatusCode = statusCode
-            };
+            return new NancyRazorBuildViewBodyResult(statusCode, body);
         }
 
         private string GetViewStartLayout(dynamic model, IRenderContext renderContext, Assembly referencingAssembly)
